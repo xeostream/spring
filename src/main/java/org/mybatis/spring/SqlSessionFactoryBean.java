@@ -22,8 +22,10 @@ import static org.springframework.util.StringUtils.hasLength;
 import static org.springframework.util.StringUtils.tokenizeToStringArray;
 
 import java.io.IOException;
+import java.lang.reflect.Modifier;
 import java.sql.SQLException;
 import java.util.Properties;
+import java.util.Set;
 
 import javax.sql.DataSource;
 
@@ -31,6 +33,7 @@ import org.apache.ibatis.builder.xml.XMLConfigBuilder;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.cache.Cache;
 import org.apache.ibatis.executor.ErrorContext;
+import org.apache.ibatis.io.ResolverUtil;
 import org.apache.ibatis.io.VFS;
 import org.apache.ibatis.mapping.DatabaseIdProvider;
 import org.apache.ibatis.mapping.Environment;
@@ -44,6 +47,8 @@ import org.apache.ibatis.transaction.TransactionFactory;
 import org.apache.ibatis.type.TypeHandler;
 import org.mybatis.logging.Logger;
 import org.mybatis.logging.LoggerFactory;
+import org.mybatis.spring.customenum.CustomEnum;
+import org.mybatis.spring.customenum.CustomEnumTypeHandler;
 import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.springframework.beans.factory.FactoryBean;
 import org.springframework.beans.factory.InitializingBean;
@@ -54,6 +59,7 @@ import org.springframework.context.event.ContextRefreshedEvent;
 import org.springframework.core.NestedIOException;
 import org.springframework.core.io.Resource;
 import org.springframework.jdbc.datasource.TransactionAwareDataSourceProxy;
+import org.springframework.util.StringUtils;
 
 /**
  * {@code FactoryBean} that creates an MyBatis {@code SqlSessionFactory}.
@@ -120,6 +126,8 @@ public class SqlSessionFactoryBean implements FactoryBean<SqlSessionFactory>, In
   private ObjectFactory objectFactory;
 
   private ObjectWrapperFactory objectWrapperFactory;
+
+  private String customEnumLocation;
 
   /**
    * Sets the ObjectFactory.
@@ -465,6 +473,9 @@ public class SqlSessionFactoryBean implements FactoryBean<SqlSessionFactory>, In
       }
     }
 
+    // register customEnum typeHandler before parse mapper xmls
+    registerCustomTypeHandler(configuration);
+
     if (this.databaseIdProvider != null) {//fix #64 set databaseId before parse mapper xmls
       try {
         configuration.setDatabaseId(this.databaseIdProvider.getDatabaseId(this.dataSource));
@@ -518,6 +529,25 @@ public class SqlSessionFactoryBean implements FactoryBean<SqlSessionFactory>, In
     return this.sqlSessionFactoryBuilder.build(configuration);
   }
 
+  private void registerCustomTypeHandler(Configuration configuration) {
+    if (StringUtils.isEmpty(this.customEnumLocation)) {
+      return;
+    }
+
+    ResolverUtil<Class<?>> resolverUtil = new ResolverUtil<>();
+    String[] packages = StringUtils.split(this.customEnumLocation, ",");
+
+    for (String pkg : packages) {
+      resolverUtil.find(new ResolverUtil.IsA(CustomEnum.class), pkg);
+      Set<Class<? extends Class<?>>> classes = resolverUtil.getClasses();
+      for (Class<?> type : classes) {
+        if (!type.isAnonymousClass() && !type.isInterface() && !Modifier.isAbstract(type.getModifiers())) {
+          configuration.getTypeHandlerRegistry().register(type, new CustomEnumTypeHandler(type));
+        }
+      }
+    }
+  }
+
   /**
    * {@inheritDoc}
    */
@@ -557,4 +587,11 @@ public class SqlSessionFactoryBean implements FactoryBean<SqlSessionFactory>, In
     }
   }
 
+  public String getCustomEnumLocation() {
+    return customEnumLocation;
+  }
+
+  public void setCustomEnumLocation(String customEnumLocation) {
+    this.customEnumLocation = customEnumLocation;
+  }
 }
